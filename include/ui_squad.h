@@ -36,4 +36,7 @@ void     uiSquadInit(TFT_eSPI& t, bool roster = false);
 // than by the clock must sit still for it. Other boards draw once.
 void     uiSquadTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, bool advance = true);
 SquadHit uiSquadTouch(int x, int y, uint32_t now);
+// [SquaschWatch_CardputerAdv_ST7789V] The centres of what a tap on this
+// screen would act on right now, as last drawn, for the keyboard cursor.
+uint8_t uiSquadStops(int16_t* xs, int16_t* ys, uint8_t cap);
 #endif

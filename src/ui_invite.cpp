@@ -228,4 +228,17 @@ InviteHit uiInviteHit(TFT_eSPI& t, int x, int y) {
         default:                    return one ? InviteHit::BACK : InviteHit::NONE;
     }
 }
+uint8_t uiInviteStops(int16_t* xs, int16_t* ys, uint8_t cap, TFT_eSPI& t) {
+    uint8_t n = 0;
+    auto add = [&](int x, int y) { if (n < cap) { xs[n] = (int16_t)x; ys[n] = (int16_t)y; n++; } };
+    const Btns b = btns(t);
+    const Page pg = page();
+    const int y = b.y + btnH() / 2;
+    if (pg.left)  add(b.leftX + b.w / 2, y);
+    if (pg.right) add(b.rightX + b.w / 2, y);
+    if (pg.one)   add(b.oneX + b.w / 2, y);
+    return n;
+}
+
+
 #endif // SQUACH_MESH

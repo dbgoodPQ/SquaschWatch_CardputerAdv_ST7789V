@@ -24,4 +24,7 @@ ComposeHit uiMeshComposeTouch(int x, int y, uint32_t now);
 void        uiMeshComposeSetTyped(const char* text);
 // What the keyboard should start from ("" for a new message).
 const char* uiMeshComposeTyped();
+// [SquaschWatch_CardputerAdv_ST7789V] The centres of what a tap on this
+// screen would act on right now, as last drawn, for the keyboard cursor.
+uint8_t uiMeshComposeStops(int16_t* xs, int16_t* ys, uint8_t cap);
 #endif

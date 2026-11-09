@@ -3992,3 +3992,27 @@ void uiClearTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, bool adv
     }
 #endif
 }
+
+// ---- cursor stops for the boards with keys instead of a touch panel --------
+// [SquaschWatch_CardputerAdv_ST7789V] Everything on the main screen that a
+// tap opens, as last drawn, in the order the tap handler in main.cpp checks
+// them: the message bubble, the watch pill, the squad badge and each Squachy
+// of the crowd. The cursor only stops on what is on screen right now.
+uint8_t uiClearExtraStops(int16_t* xs, int16_t* ys, uint8_t cap) {
+    uint8_t n = 0;
+    auto add = [&](int x, int y) { if (n < cap) { xs[n] = (int16_t)x; ys[n] = (int16_t)y; n++; } };
+    const bool boring = Settings::boringMode();
+    if (s_bubbleOn && !boring && s_bubW > 0) add(s_bubX + s_bubW / 2, s_bubY + s_bubH / 2);
+    if (s_watchPillOn && s_wpW > 0)          add(s_wpX + s_wpW / 2, s_wpY + s_wpH / 2);
+    if (s_badgeOn && !boring && s_badW > 0)  add(s_badX + s_badW / 2, s_badY + s_badH / 2);
+    if (!boring)
+        for (uint8_t i = 0; i < s_crowdN; i++) add(s_crowdX[i], (s_crowdTop[i] + s_crowdBot[i]) / 2);
+    return n;
+}
+
+bool uiClearNearbyStop(int16_t& x, int16_t& y) {
+    if (!s_nearbyOn || s_nbW <= 0) return false;
+    x = (int16_t)(s_nbX + s_nbW / 2);
+    y = (int16_t)(s_nbY + s_nbH / 2);
+    return true;
+}

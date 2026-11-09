@@ -367,3 +367,15 @@ void uiWifiPassClear() {
     memset(s_buf, 0, sizeof s_buf);
     s_len = 0;
 }
+
+// [SquaschWatch_CardputerAdv_ST7789V] BACK, SHOW, DEL and OK, as last laid
+// out, for the keyboard cursor. The letters come from the real keyboard.
+uint8_t uiWifiPassStops(int16_t* xs, int16_t* ys, uint8_t cap) {
+    uint8_t n = 0;
+    auto add = [&](int x, int y) { if (n < cap) { xs[n] = (int16_t)x; ys[n] = (int16_t)y; n++; } };
+    add(BACK_X + BACK_W / 2, BACK_Y + BACK_H / 2);
+    if (s_keyN) add(s_keys[9].x + s_keys[9].w - SHOW_W / 2, FIELD_Y + FIELD_H / 2);
+    for (uint8_t i = 0; i < s_keyN; i++)
+        if (s_keys[i].ch == K_DEL || s_keys[i].ch == K_OK) add(s_keys[i].x + s_keys[i].w / 2, s_keys[i].y + s_keys[i].h / 2);
+    return n;
+}

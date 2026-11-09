@@ -68,6 +68,11 @@ bool uiClearCounterHit(int x, int y, DetectionType& column);
 bool uiClearColumnHolds(DetectionType column, DetectionType d);
 // The tiles' centres, for the cursor on the boards with buttons.
 uint8_t uiClearCounterStops(int16_t* xs, int16_t* ys, uint8_t cap);
+// The message bubble, the watch pill, the squad badge and the crowd, as last
+// drawn: the other things a tap on the main screen opens, for the cursor.
+uint8_t uiClearExtraStops(int16_t* xs, int16_t* ys, uint8_t cap);
+// The NEARBY headline's centre, when it is drawn (long-press it).
+bool uiClearNearbyStop(int16_t& x, int16_t& y);
 // The NEARBY headline, drawn only with DETECTIONS set to CLASSIC and while
 // something is live. Long-pressing it opens the closest device -- see
 // main.cpp. False whenever it is not drawn.

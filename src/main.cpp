@@ -976,6 +976,7 @@ static bool sampleTouchRaw(int16_t& a, int16_t& b) {
 // the LOG and ALERT screens for what they mean.
 static bool s_confirmPending = false;   // the WATCH/HUNT panel is up
 static bool s_infoPending    = false;   // MORE INFO is up
+static bool s_rawScanIsBle    = true;    // RAWSCAN is showing Bluetooth (else WiFi)
 
 #if defined(CARDPUTER_EXTUI)
 // The EXT UI build drives the external panel as THE display (TFT_eSPI), so
@@ -1164,6 +1165,7 @@ static uint32_t      s_stickHoldUntil = 0;   // a kind-3 press, held for the scr
 static StickPt       s_stickHoldPt;
 
 static const int      STICK_KEY1 = 11, STICK_KEY2 = 12;
+static uint32_t       s_stickShownAt = 0;       // the cursor shows for a while after a press
 // What a board's keys ask of the cursor this frame. `press` is a level --
 // held is held -- and the rest happen once.
 struct SmallKeys { bool press, next, prev, home; };
@@ -1173,6 +1175,47 @@ struct SmallKeys { bool press, next, prev, home; };
 // from M5Cardputer's TCA8418 reader). Polled, not interrupt-driven: the
 // chip keeps a ten-event FIFO and the loop comes round far faster than that.
 static bool s_cardKeysOk = false, s_cardEnter = false;
+// [SquaschWatch_CardputerAdv_ST7789V] Typing. On a text screen -- the WiFi
+// password, the payphone (name, message) and the PIN pads -- the keys type
+// what is printed on them instead of moving the cursor: SHIFT for the upper
+// row of each key, DEL rubs out, ENTER is OK (or presses the cursor's stop
+// while the cursor is showing), FN with ; . , / still moves the cursor, as
+// does TAB, and ESC still goes home. The characters are M5's own layout.
+static bool    s_cardShift = false, s_cardFn = false;
+static char    s_cardTyped[16];
+static uint8_t s_cardTypedN = 0;
+static const char CARD_KEYS[2][4][14] = {
+    { { '`','1','2','3','4','5','6','7','8','9','0','-','=', 0 },
+      {  0, 'q','w','e','r','t','y','u','i','o','p','[',']','\\' },
+      {  0,  0, 'a','s','d','f','g','h','j','k','l',';','\'', 0 },
+      {  0,  0,  0, 'z','x','c','v','b','n','m',',','.','/',' ' } },
+    { { '~','!','@','#','$','%','^','&','*','(',')','_','+', 0 },
+      {  0, 'Q','W','E','R','T','Y','U','I','O','P','{','}','|' },
+      {  0,  0, 'A','S','D','F','G','H','J','K','L',':','"', 0 },
+      {  0,  0,  0, 'Z','X','C','V','B','N','M','<','>','?',' ' } },
+};
+static bool cardTextScreen() {
+    if (state == AppState::WIFI_PASS) return true;
+#if SQUACH_MESH
+    if (state == AppState::PHONE || state == AppState::PIN_ENTRY || state == AppState::LOCKED) return true;
+#endif
+    return false;
+}
+static void cardPushChar(char c) {
+    if (s_cardTypedN < sizeof s_cardTyped) s_cardTyped[s_cardTypedN++] = c;
+}
+// The queued characters, to whichever text screen is up.
+static void cardTypeFlush(uint32_t now) {
+    for (uint8_t i = 0; i < s_cardTypedN; i++) {
+        const char c = s_cardTyped[i];
+        if (state == AppState::WIFI_PASS) uiWifiPassKey(c, now);
+#if SQUACH_MESH
+        else if (state == AppState::PHONE || state == AppState::PIN_ENTRY || state == AppState::LOCKED) uiPhoneKey(c);
+#endif
+    }
+    if (s_cardTypedN) lastTouch = now;
+    s_cardTypedN = 0;
+}
 static bool cardReg(uint8_t reg, uint8_t v) {
     Wire.beginTransmission(0x34);
     Wire.write(reg); Wire.write(v);
@@ -1223,12 +1266,38 @@ static SmallKeys smallKeysRead() {
         const bool down = (ev & 0x80) != 0;
         const int  code = (ev & 0x7F) - 1;
         const int  row = (code % 10) % 4, col = (code / 10) * 2 + ((code % 10) > 3 ? 1 : 0);
-        const bool enter = (row == 2 && col == 13) || (row == 3 && col == 13);     // ENTER, or the space bar
-        if (enter) { s_cardEnter = down; continue; }
+        if (row == 2 && col == 1) { s_cardShift = down; continue; }               // SHIFT
+        if (row == 2 && col == 0) { s_cardFn = down; continue; }                  // FN
+        const bool typing   = cardTextScreen();
+        const bool isEnter  = row == 2 && col == 13;
+        const bool isSpace  = row == 3 && col == 13;
+        if (isEnter || (isSpace && !typing)) {                                    // ENTER, or the space bar
+            // On a text screen ENTER is OK, unless the cursor is up: then it
+            // presses what the cursor is on, as everywhere else.
+            const bool cursorUp = s_stickShownAt && millis() - s_stickShownAt < STICK_SHOW_MS;
+            if (typing && down && !cursorUp) { cardPushChar('\n'); continue; }
+            s_cardEnter = down;
+            continue;
+        }
         if (!down) continue;
-        if ((row == 3 && (col == 11 || col == 12)) || (row == 1 && col == 0)) k.next = true;   // down, right, TAB
-        else if ((row == 2 && col == 11) || (row == 3 && col == 10))          k.prev = true;   // up, left
-        else if ((row == 0 && col == 0) || (row == 0 && col == 13))           k.home = true;   // ESC, or DEL
+        const bool aDown = row == 3 && col == 11, aRight = row == 3 && col == 12;
+        const bool aUp   = row == 2 && col == 11, aLeft  = row == 3 && col == 10;
+        const bool tab   = row == 1 && col == 0,  esc    = row == 0 && col == 0;
+        const bool del   = row == 0 && col == 13;
+        if (typing) {
+            if (del)                              cardPushChar('\b');
+            else if (tab || (s_cardFn && (aDown || aRight))) k.next = true;
+            else if (s_cardFn && (aUp || aLeft))  k.prev = true;
+            else if (esc)                         k.home = true;
+            else if (row < 4 && col < 14) {
+                const char c = CARD_KEYS[s_cardShift ? 1 : 0][row][col];
+                if (c) cardPushChar(c);
+            }
+            continue;
+        }
+        if (aDown || aRight || tab)  k.next = true;   // down, right, TAB
+        else if (aUp || aLeft)       k.prev = true;   // up, left
+        else if (esc || del)         k.home = true;   // ESC, or DEL
         Serial.printf("[keys] key %d,%d\n", row, col);
     }
     cardReg(0x02, 0x0F);
@@ -1252,11 +1321,10 @@ static SmallKeys smallKeysRead() {
 #endif
 static uint8_t        s_stickStop = 0;
 static AppState       s_stickStopState = AppState::BOOT;
-static uint32_t       s_stickShownAt = 0;       // the cursor shows for a while after a press
 static bool           s_stickHome = false;      // KEY2 held: loop() goes home
 static int8_t         s_stickDrag = 0;          // a scripted drag under way: +1 down the list, -1 up
 static uint8_t        s_stickDragStep = 0;
-static const uint8_t  STICK_STOPS_MAX = 24;
+static const uint8_t  STICK_STOPS_MAX = 40;   // 24 upstream; the 320x240 screens hold more
 
 // What is under a point on a list screen, as that screen's own hit test
 // sees it, or -1. The stops are found by sweeping this over the screen, so
@@ -1264,6 +1332,9 @@ static const uint8_t  STICK_STOPS_MAX = 24;
 // not -- and a screen that changes its layout takes its stops with it.
 static int stickListId(int x, int y) {
     const int w = tft.width(), h = tft.height();
+    // The MORE INFO panel over LOG or ALERT: its MORE / GOT IT button.
+    if (s_infoPending && (state == AppState::LOG || state == AppState::ALERT))
+        return Theme::infoPanelHitDismiss(x, y, w, h) ? 1 : -1;
     switch (state) {
         case AppState::SETTINGS: {
             if (uiSettingsConfirmRow() != SettingsRow::NONE) {
@@ -1307,13 +1378,126 @@ static int stickListId(int x, int y) {
             return r == MeshMenuRow::NONE ? -1 : (int)r;
         }
 #endif
+        // [SquaschWatch_CardputerAdv_ST7789V] Every other screen whose hit
+        // test is a pure function of the point, swept the same way: its stops
+        // are wherever it really answers. Lists below first, then the screens
+        // that are only buttons.
+        case AppState::STATUS_LIGHT: {
+            const LightRow r = uiLightHitTest(*canvas, x, y, w, h);
+            return r == LightRow::NONE ? -1 : (int)r;
+        }
+        case AppState::IGNORE_LIST: {
+            const uint8_t r = uiIgnoreListHitRemove(*canvas, x, y, w, h);
+            return r == 0xFF ? -1 : (int)r;
+        }
+        case AppState::RAWSCAN: {
+            if (s_confirmPending) {
+                const RawScanConfirmTap c = uiRawScanHitConfirm(x, y, w, h);
+                return c == RawScanConfirmTap::NONE ? -1 : 2000 + (int)c;
+            }
+            const RawScanTap b = uiRawScanHitTest(x, y, w, h);
+            if (b != RawScanTap::NONE) return 10 + (int)b;
+            const bool done = s_rawScanIsBle ? engine.rawBleScanDone() : engine.rawWifiScanDone();
+            if (!done) return -1;
+            const int r = uiRawScanRowAt(*canvas, x, y, w, h);
+            const int n = s_rawScanIsBle ? engine.rawBleCount() : engine.rawWifiCount();
+            return (r >= 0 && r < n) ? 100 + r : -1;
+        }
+        case AppState::UPDATE: {
+            int net = -1;
+            const UpdateHit u = uiUpdateHitTest(*canvas, x, y, &net);
+            if (u == UpdateHit::NONE) return -1;
+            return u == UpdateHit::NETWORK ? 100 + net : (int)u;
+        }
+        case AppState::WIFI_NETS: {
+            int row = -1;
+            const WifiNetsHit u = uiWifiNetsHit(*canvas, x, y, &row);
+            if (u == WifiNetsHit::NONE) return -1;
+            return u == WifiNetsHit::ROW ? 100 + row : (int)u;
+        }
+        case AppState::WIFI_ADD: {
+            int row = -1;
+            const WifiAddHit u = uiWifiAddHit(*canvas, x, y, engine, &row);
+            if (u == WifiAddHit::NONE) return -1;
+            return u == WifiAddHit::ROW ? 100 + row : (int)u;
+        }
+        case AppState::BEACON_WARN: {
+            const BeaconWarnHit u = uiBeaconWarnHitTest(*canvas, x, y);
+            return u == BeaconWarnHit::NONE ? -1 : (int)u;
+        }
+        case AppState::COLOR_CHECK: {
+            const ColorCheckTap u = uiColorCheckHitTest(x, y, w, h);
+            return u == ColorCheckTap::NONE ? -1 : (int)u;
+        }
+        case AppState::DIAGNOSTICS:
+            return uiDiagnosticsHitBack(x, y, w, h) ? 1 : -1;
+        case AppState::WATCH_ALERT:
+            return uiWatchAlertHitRemove(*canvas, x, y) ? 1 : -1;
+        case AppState::BINGO:
+            return uiBingoHitTest(*canvas, x, y, w, h) == BingoTap::BACK ? 1 : -1;
+        case AppState::HUNT:
+            return uiHuntHitStop(x, y, w, h) ? 1 : uiHuntHitBack(x, y, w, h) ? 2 : -1;
+        case AppState::ALERT:
+            if (uiAlertHitIgnore(x, y, w, h))   return 1;
+            if (uiAlertHitHunt(x, y, w, h))     return 2;
+            if (uiAlertHitSnooze(x, y, w, h))   return 3;
+            if (uiAlertHitMoreInfo(x, y, w, h)) return 4;
+            return -1;
+#if SQUACH_MESH
+        case AppState::MESH_WARN: {
+            const MeshWarnHit u = uiMeshWarnHitTest(*canvas, x, y);
+            return u == MeshWarnHit::NONE ? -1 : (int)u;
+        }
+        case AppState::NUDGE: {
+            const NudgeHit u = uiNudgeHit(*canvas, x, y);
+            return u == NudgeHit::NONE ? -1 : (int)u;
+        }
+        case AppState::SQUAD_UPDATE: {
+            const SquadUpdateHit u = uiSquadUpdateHit(*canvas, x, y);
+            return u == SquadUpdateHit::NONE ? -1 : (int)u;
+        }
+#endif
         default: return -1;
     }
 }
+// The scrolling lists: their rows, plus BACK and the two scroll arrows.
 static bool stickIsList() {
     return state == AppState::SETTINGS || state == AppState::POWER_SAVER ||
            state == AppState::SECURITY || state == AppState::DETECTION_FILTER ||
-           state == AppState::MESH_MENU || state == AppState::LOG;
+           state == AppState::MESH_MENU || state == AppState::LOG ||
+           state == AppState::STATUS_LIGHT || state == AppState::IGNORE_LIST;
+}
+// The screens that are only buttons (and RAWSCAN, which adds its arrows):
+// one stop for each thing the hit test names, nothing added.
+static bool stickIsSwept() {
+    switch (state) {
+        case AppState::RAWSCAN: case AppState::UPDATE: case AppState::WIFI_NETS:
+        case AppState::WIFI_ADD: case AppState::BEACON_WARN: case AppState::COLOR_CHECK:
+        case AppState::DIAGNOSTICS: case AppState::HUNT: case AppState::BINGO:
+#if SQUACH_MESH
+        case AppState::MESH_WARN: case AppState::NUDGE: case AppState::SQUAD_UPDATE:
+#endif
+            return true;
+        default:
+            return false;
+    }
+}
+// One stop per id the hit test answers with, at the middle of everywhere it
+// answered, in reading order. `cap` ids at most.
+struct StickAcc { int id; int32_t sx, sy; uint16_t c; };
+static uint8_t stickSweep(StickAcc* acc, uint8_t cap) {
+    const int w = tft.width(), h = tft.height();
+    uint8_t an = 0;
+    for (int y = 2; y < h; y += 4)
+        for (int x = 6; x < w; x += 12) {
+            const int id = stickListId(x, y);
+            if (id < 0) continue;
+            uint8_t a = 0;
+            while (a < an && acc[a].id != id) a++;
+            if (a == an) { if (an == cap) continue; acc[an++] = { id, 0, 0, 0 }; }
+            acc[a].sx += x; acc[a].sy += y; acc[a].c++;
+        }
+    return an;
 }
 
 static uint8_t stickStopsBuild(StickPt* out, uint8_t cap) {
@@ -1321,7 +1505,9 @@ static uint8_t stickStopsBuild(StickPt* out, uint8_t cap) {
     uint8_t n = 0;
     auto add = [&](int x, int y, uint8_t kind = 0) { if (n < cap) out[n++] = { (int16_t)x, (int16_t)y, kind }; };
     if (s_infoPending && (state == AppState::LOG || state == AppState::ALERT)) {
-        add(w / 2, h - 17);             // MORE / GOT IT
+        StickAcc acc[2];                // MORE / GOT IT, where the panel put it
+        if (stickSweep(acc, 2)) add(acc[0].sx / acc[0].c, acc[0].sy / acc[0].c);
+        else                    add(w / 2, h - 17);
         return n;
     }
     if (state == AppState::CLEAR) {
@@ -1338,7 +1524,42 @@ static uint8_t stickStopsBuild(StickPt* out, uint8_t cap) {
         }
         int px0, py0;
         if (Pet::clippyCenter(px0, py0)) add(px0, py0);   // C1iPPY, for a poke
+        {
+            // [SquaschWatch_CardputerAdv_ST7789V] The message bubble, the
+            // watch pill, the squad badge, each visiting Squachy, and NEARBY
+            // (a long press): everything else a tap here opens.
+            int16_t xs[12], ys[12];
+            const uint8_t k = uiClearExtraStops(xs, ys, 12);
+            for (uint8_t i = 0; i < k; i++) add(xs[i], ys[i]);
+            int16_t nx, ny;
+            if (uiClearNearbyStop(nx, ny)) add(nx, ny, 3);
+        }
         return n;
+    }
+    // [SquaschWatch_CardputerAdv_ST7789V] The screens that keep their own
+    // button rectangles: each one says where its targets are right now.
+    {
+        int16_t xs[STICK_STOPS_MAX], ys[STICK_STOPS_MAX];
+        int k = -1;
+        switch (state) {
+            case AppState::WIFI_PASS: k = uiWifiPassStops(xs, ys, cap); break;
+#if SQUACH_MESH
+            case AppState::SQUAD:        k = uiSquadStops(xs, ys, cap); break;
+            case AppState::MESH_PHRASE:  k = uiMeshPhraseStops(xs, ys, cap); break;
+            case AppState::MESH_COMPOSE: k = uiMeshComposeStops(xs, ys, cap); break;
+            case AppState::PHONE:
+            case AppState::PIN_ENTRY:
+            case AppState::LOCKED:       k = uiPhoneStops(xs, ys, cap); break;
+            case AppState::INVITE:       k = uiInviteStops(xs, ys, cap, *canvas); break;
+#endif
+            case AppState::OUTFIT_UNLOCK: xs[0] = (int16_t)(w / 2); ys[0] = (int16_t)(h / 2); k = 1; break;
+            default: break;
+        }
+        if (k >= 0) {
+            for (int i = 0; i < k; i++) add(xs[i], ys[i]);
+            if (n == 0) add(w / 2, h / 2);   // nothing drawn yet this frame
+            return n;
+        }
     }
     if (state == AppState::SYS_PROPS) {
         int16_t xs[6], ys[6];
@@ -1347,27 +1568,38 @@ static uint8_t stickStopsBuild(StickPt* out, uint8_t cap) {
         return n;
     }
     if (state == AppState::ALERT) {
+        // [SquaschWatch_CardputerAdv_ST7789V] The alert's own buttons, where
+        // its hit tests put them at this size, then the plate.
+        StickAcc acc[6];
+        const uint8_t an = stickSweep(acc, 6);
+        for (uint8_t a = 0; a < an; a++) add(acc[a].sx / acc[a].c, acc[a].sy / acc[a].c);
         add(w / 3, h / 2);              // the plate: anywhere dismisses
-        add(w / 2, h - 15);             // SNOOZE
-        add(37, h - 15);                // HUNT
-        add(w - 37, h - 15);            // INFO
-        add(w - 35, 14);                // IGNORE
+        return n;
+    }
+    if (stickIsSwept()) {
+        StickAcc acc[24];
+        const uint8_t an = stickSweep(acc, 24);
+        int top = h, bot = 0;
+        for (uint8_t a = 0; a < an; a++) {
+            const int cy = acc[a].sy / acc[a].c;
+            // A RAWSCAN row is a long press: it opens WATCH / HUNT / IGNORE.
+            const bool row = state == AppState::RAWSCAN && acc[a].id >= 100 && acc[a].id < 2000;
+            if (row) { if (cy < top) top = cy; if (cy > bot) bot = cy; }
+            add(acc[a].sx / acc[a].c, cy, row ? 3 : 0);
+        }
+        if (state == AppState::DIAGNOSTICS && Theme::compact()) add(w / 2, h / 2 - 10);   // the next page
+        if (n == 0) add(w / 2, h / 2);  // nothing to press right now (a download running)
+        if (state == AppState::RAWSCAN && !s_confirmPending && bot >= top) {
+            add(w - 9, bot, 1);         // more, below
+            add(w - 9, top, 2);         // and above
+        }
         return n;
     }
     if (stickIsList()) {
         // Each thing the hit test names gets one stop, at the middle of
         // everywhere it answered. In reading order, which for rows is down.
-        struct Acc { int id; int32_t sx, sy; uint16_t c; } acc[12];
-        uint8_t an = 0;
-        for (int y = 2; y < h; y += 4)
-            for (int x = 6; x < w; x += 12) {
-                const int id = stickListId(x, y);
-                if (id < 0) continue;
-                uint8_t a = 0;
-                while (a < an && acc[a].id != id) a++;
-                if (a == an) { if (an == 12) continue; acc[an++] = { id, 0, 0, 0 }; }
-                acc[a].sx += x; acc[a].sy += y; acc[a].c++;
-            }
+        StickAcc acc[24];
+        const uint8_t an = stickSweep(acc, 24);
         const bool logRows = state == AppState::LOG && !s_confirmPending;
         for (uint8_t a = 0; a < an; a++) add(acc[a].sx / acc[a].c, acc[a].sy / acc[a].c, logRows ? 3 : 0);
         const bool panel = (state == AppState::SETTINGS && uiSettingsConfirmRow() != SettingsRow::NONE) ||
@@ -1402,21 +1634,11 @@ static uint8_t stickStopsBuild(StickPt* out, uint8_t cap) {
         add(w / 2, h / 2);              // anywhere else goes back
         return n;
     }
-    if (state == AppState::DIAGNOSTICS) {
-        const Theme::ButtonBarGeom bar = Theme::computeButtonBar(w, h);
-        add(w / 2, h / 2 - 10);               // the next page
-        add(w / 2, bar.y + bar.h / 2);        // BACK
-        return n;
-    }
-    if (state == AppState::HUNT) {
-        const Theme::ButtonBarGeom bar = Theme::computeButtonBar(w, h);
-        add(w / 2 - 60, bar.y + bar.h / 2);   // BACK
-        add(w / 2 + 60, bar.y + bar.h / 2);   // STOP
-        return n;
-    }
     if (state == AppState::WATCH_ALERT) {
         add(w / 2, h / 3);              // anywhere dismisses
-        add(w / 2, h - 14);             // REMOVE FROM WATCH LIST
+        StickAcc acc[2];                // REMOVE FROM WATCH LIST, where it is drawn
+        if (stickSweep(acc, 2)) add(acc[0].sx / acc[0].c, acc[0].sy / acc[0].c);
+        else                    add(w / 2, h - 14);
         return n;
     }
     add(w / 2, h - 12);                 // BACK, pinned to the bottom edge
@@ -1460,6 +1682,9 @@ static TouchPoint stickPoll() {
     const uint8_t n = stickStops(pts);
     if (s_stickStop >= n) s_stickStop = 0;
     const SmallKeys keys = smallKeysRead();
+#if defined(CARDPUTER_ADV)
+    cardTypeFlush(now);
+#endif
     const bool k1 = keys.press;
     if (keys.home) {
         s_stickHome = true;
@@ -2494,7 +2719,7 @@ static void enterLog() {
     uiLogInit(*canvas);
 }
 
-static bool    s_rawScanIsBle = true;
+// s_rawScanIsBle: defined up with s_infoPending, for the keyboard cursor.
 
 static void enterRawScan(bool isBle) {
     state = AppState::RAWSCAN;
@@ -6270,7 +6495,8 @@ void loop() {
 #if defined(SQW_SMALL)
     if (s_stickHome) {
         s_stickHome = false;
-        if (state != AppState::CLEAR && state != AppState::BOOT) goHome();
+        // Not from the lock screen: home is behind the PIN.
+        if (state != AppState::CLEAR && state != AppState::BOOT && state != AppState::LOCKED) goHome();
     }
 #endif
     // True only on the exact frame a touch begins/ends -- unlike

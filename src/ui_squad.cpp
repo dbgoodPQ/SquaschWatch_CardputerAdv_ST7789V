@@ -318,4 +318,17 @@ SquadHit uiSquadTouch(int x, int y, uint32_t now) {
 const uint8_t* uiSquadSelectedMac()  { return s_n ? s_members[s_sel].mac : nullptr; }
 const char*    uiSquadSelectedName() { return s_n ? memberName(s_members[s_sel].peer) : ""; }
 
+uint8_t uiSquadStops(int16_t* xs, int16_t* ys, uint8_t cap) {
+    uint8_t n = 0;
+    auto add = [&](int x, int y) { if (n < cap) { xs[n] = (int16_t)x; ys[n] = (int16_t)y; n++; } };
+    auto r = [&](const Rect& q) { if (q.w > 0) add(q.x + q.w / 2, q.y + q.h / 2); };
+    r(s_back);
+    r(s_send);
+    if (s_n > 1) { r(s_prev); r(s_next); }
+    if (s_n) { r(s_invite); r(s_forget); r(s_add); r(s_hunt); }
+    for (uint8_t i = 0; i < s_rowN; i++) r(s_rows[i]);
+    return n;
+}
+
+
 #endif // SQUACH_MESH

@@ -774,4 +774,29 @@ ComposeHit uiMeshComposeTouch(int x, int y, uint32_t now) {
     return ComposeHit::NONE;
 }
 
+uint8_t uiMeshComposeStops(int16_t* xs, int16_t* ys, uint8_t cap) {
+    uint8_t n = 0;
+    auto add = [&](int x, int y) { if (n < cap) { xs[n] = (int16_t)x; ys[n] = (int16_t)y; n++; } };
+    auto r = [&](const Rect& q) { if (q.w > 0) add(q.x + q.w / 2, q.y + q.h / 2); };
+    if (s_typedOn) { r(s_back); r(s_send); return n; }
+    if (s_sel >= 0) {
+        r(s_send); r(s_back);
+    } else {
+        r(s_emoteBtn);
+        if (s_emoteOn) {
+            for (uint8_t i = 0; i < EmoteScript::TABS; i++) r(s_tabRect[i]);
+            r(s_random);
+            for (uint8_t i = 0; i < EmoteScript::PER_TAB; i++) r(s_emoteRect[i]);
+            r(s_back);
+            return n;
+        }
+        for (uint8_t i = 0; i < MeshMsg::CANNED_TABS; i++) r(s_lineTabRect[i]);
+        r(s_type); r(s_help); r(s_back);
+    }
+    if (s_fill.w) r(s_fill);
+    for (uint8_t i = 0; i < s_lineN; i++) r(s_lineRect[i]);
+    return n;
+}
+
+
 #endif // SQUACH_MESH

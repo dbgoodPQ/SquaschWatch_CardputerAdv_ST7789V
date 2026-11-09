@@ -468,4 +468,19 @@ void uiMeshPhraseDemo(uint8_t mode) {
     }
 }
 
+uint8_t uiMeshPhraseStops(int16_t* xs, int16_t* ys, uint8_t cap) {
+    uint8_t n = 0;
+    auto add = [&](int x, int y) { if (n < cap) { xs[n] = (int16_t)x; ys[n] = (int16_t)y; n++; } };
+    auto r = [&](const Rect& q) { if (q.w > 0) add(q.x + q.w / 2, q.y + q.h / 2); };
+    if (s_mode == Mode::SHOW && s_showRow.w) r(s_showRow);
+    if (s_mode == Mode::PICK) {
+        if (!s_letter) { for (int i = 0; i < 26; i++) if (s_letterOn[i]) r(s_letterRect[i]); }
+        else            for (uint8_t i = 0; i < s_wordN; i++) r(s_wordRect[i]);
+    }
+    if (s_mode != Mode::STRETCH)
+        for (int i = 0; i < 3; i++) if (s_btnOn[i]) r(s_btn[i]);
+    return n;
+}
+
+
 #endif // SQUACH_MESH

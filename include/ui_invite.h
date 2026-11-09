@@ -23,4 +23,7 @@ bool      uiInviteShowingPhrase();
 // For the emulator: draw as if the invite were in this state, with this code
 // and this name. Cleared by uiInviteInit().
 void      uiInviteDemo(MeshTalk::InviteState st, uint16_t code, const char* name, bool inviter);
+// [SquaschWatch_CardputerAdv_ST7789V] The centres of what a tap on this
+// screen would act on right now, as last drawn, for the keyboard cursor.
+uint8_t uiInviteStops(int16_t* xs, int16_t* ys, uint8_t cap, TFT_eSPI& t);
 #endif

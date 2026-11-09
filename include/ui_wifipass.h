@@ -28,3 +28,6 @@ WifiPassResult uiWifiPassResult();
 const char*    uiWifiPassText();
 const char*    uiWifiPassSsid();
 void           uiWifiPassClear();
+// [SquaschWatch_CardputerAdv_ST7789V] The centres of what a tap on this
+// screen would act on right now, as last drawn, for the keyboard cursor.
+uint8_t uiWifiPassStops(int16_t* xs, int16_t* ys, uint8_t cap);

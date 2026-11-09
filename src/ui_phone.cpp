@@ -460,6 +460,18 @@ static void drawPinPad(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, bo
 // only, and the message board whatever it draws.
 void uiPhoneKey(char c) {
     if (c == '\r') c = Qwerty::OK;
+    // [SquaschWatch_CardputerAdv_ST7789V] The PIN pad from a real keyboard
+    // (the Cardputer's): exactly what a tap on its keys does -- digits fill
+    // the dots and the PIN submits itself on the last one, DEL rubs one out.
+    // OK and letters do nothing (OK used to save the digits as a NAME).
+    if (pin()) {
+        if (s_pinWaitMsg) return;
+        if (c == Qwerty::BKSP) { if (s_len) s_buf[--s_len] = '\0'; return; }
+        if (c < '0' || c > '9') return;
+        if (s_len < s_pinLen) { s_buf[s_len++] = c; s_buf[s_len] = '\0'; }
+        if (s_len == s_pinLen) { s_pinReady = true; s_done = true; }
+        return;
+    }
     if (c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');
     if      (c == Qwerty::BKSP) deleteLast();
     else if (c == Qwerty::OK)   saveAndClose();
@@ -726,5 +738,27 @@ void uiPhoneTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, bool adv
     Theme::drawButton(t, s_toggleX, s_toggleY, BW_(), BH, qw ? "[ KEYPAD ]" : "[ QWERTY ]", false);
 
 }
+
+uint8_t uiPhoneStops(int16_t* xs, int16_t* ys, uint8_t cap) {
+    uint8_t n = 0;
+    auto add = [&](int x, int y) { if (n < cap) { xs[n] = (int16_t)x; ys[n] = (int16_t)y; n++; } };
+    const int bx = BX + BW_() / 2, by = s_backY + BH / 2;
+    if (pin()) {
+        if (!s_pinWaitMsg)
+            for (int i = 0; i < 12; i++) {
+                if (i == 11) continue;                       // # does nothing
+                add(keysX() + (i % 3) * (KW + KGAP) + KW / 2, KY + (i / 3) * (KH + KGAP) + KH / 2);
+            }
+        if (s_pinBack || s_pinForgot) add(bx, by);
+        return n;
+    }
+    if (!Settings::phoneQwerty())
+        for (int i = 0; i < 12; i++)
+            add(keysX() + (i % 3) * (KW + KGAP) + KW / 2, KY + (i / 3) * (KH + KGAP) + KH / 2);
+    add(s_toggleX + BW_() / 2, s_toggleY + BH / 2);
+    add(bx, by);
+    return n;
+}
+
 
 #endif // SQUACH_MESH

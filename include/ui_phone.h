@@ -55,4 +55,7 @@ void        uiPhonePinPrompt(const char* prompt);
 // and uiPhoneDone() comes back with uiPhonePinForgot() true.
 void        uiPhonePinAllowForgot(bool allow);
 bool        uiPhonePinForgot();
+// [SquaschWatch_CardputerAdv_ST7789V] The centres of what a tap on this
+// screen would act on right now, as last drawn, for the keyboard cursor.
+uint8_t uiPhoneStops(int16_t* xs, int16_t* ys, uint8_t cap);
 #endif

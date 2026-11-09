@@ -27,4 +27,7 @@ bool uiMeshPhraseDone();
 // Emulator only: 0 shows the current phrase, 1 a freshly rolled one, 2 the
 // picker two words in with a letter chosen. Nothing on the device calls it.
 void uiMeshPhraseDemo(uint8_t mode);
+// [SquaschWatch_CardputerAdv_ST7789V] The centres of what a tap on this
+// screen would act on right now, as last drawn, for the keyboard cursor.
+uint8_t uiMeshPhraseStops(int16_t* xs, int16_t* ys, uint8_t cap);
 #endif
