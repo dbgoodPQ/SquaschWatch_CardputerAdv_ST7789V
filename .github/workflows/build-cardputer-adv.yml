@@ -1,0 +1,104 @@
+# Builds only the M5Stack Cardputer ADV firmware (EXT SCREEN = Waveshare 2"
+# ST7789V) and uploads it as a workflow artifact:
+#
+#   SquachWatch-CardputerAdv-ST7789V-merged.bin   whole image, flash at 0x0
+#   bootloader.bin / partitions.bin / boot_app0.bin / firmware.bin
+#                                                  the separate pieces
+#
+# Runs on every push and pull request, and by hand from the Actions tab
+# (Run workflow). On a v*.*.* tag the same files are attached to a GitHub
+# release as well.
+name: Build Cardputer ADV (ST7789V)
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*.*.*']
+    paths-ignore:
+      - '**.md'
+  pull_request:
+  workflow_dispatch: {}
+
+concurrency:
+  group: build-cardputer-adv-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write   # only used to attach files to a release on a tag
+
+env:
+  PIO_ENV: cardputer-adv
+  OUT_NAME: SquachWatch-CardputerAdv-ST7789V
+
+jobs:
+  cardputer-adv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # extra_script.py stamps `git describe` into the firmware
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/pip
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+          restore-keys: pio-${{ runner.os }}-
+
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+
+      - name: Build ${{ env.PIO_ENV }}
+        run: pio run -e "$PIO_ENV"
+
+      - name: Collect binaries and make a merged image
+        run: |
+          set -euo pipefail
+          B=".pio/build/$PIO_ENV"
+          mkdir -p out
+          cp "$B/bootloader.bin" "$B/partitions.bin" "$B/firmware.bin" out/
+          BOOT_APP0="$(find ~/.platformio/packages -path '*framework-arduinoespressif32*/tools/partitions/boot_app0.bin' | head -1)"
+          cp "$BOOT_APP0" out/boot_app0.bin
+          ESPTOOL="$(find ~/.platformio/packages/tool-esptoolpy -name esptool.py | head -1)"
+          # ESP32-S3: bootloader at 0x0 (not 0x1000 as on a plain ESP32),
+          # 8 MB QIO flash, partitions_ota.csv's app0 at 0x10000.
+          python "$ESPTOOL" --chip esp32s3 merge_bin \
+            -o "out/$OUT_NAME-merged.bin" \
+            --flash_mode qio --flash_freq 80m --flash_size 8MB \
+            0x0     out/bootloader.bin \
+            0x8000  out/partitions.bin \
+            0xe000  out/boot_app0.bin \
+            0x10000 out/firmware.bin
+          VERSION="$(git describe --tags --always --dirty)"
+          cat > out/FLASHING.txt <<EOF
+          SquachWatch for M5Stack Cardputer ADV + Waveshare 2" ST7789V (EXT SCREEN)
+          Version: $VERSION
+
+          Fresh install (erases saved settings):
+            esptool.py --chip esp32s3 write_flash 0x0 $OUT_NAME-merged.bin
+
+          Update keeping settings:
+            esptool.py --chip esp32s3 write_flash 0x0 bootloader.bin 0x8000 partitions.bin 0xe000 boot_app0.bin 0x10000 firmware.bin
+
+          Download mode: hold G0 while pressing RST (or plugging in USB).
+          EOF
+          ls -l out
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.OUT_NAME }}-${{ github.sha }}
+          path: out/*
+          if-no-files-found: error
+
+      - name: Attach to release (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: out/*

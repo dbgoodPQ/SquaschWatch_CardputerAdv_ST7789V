@@ -977,20 +977,71 @@ static bool s_infoPending    = false;   // MORE INFO is up
 
 #if defined(CARDPUTER_ADV)
 // ---- EXT SCREEN: a second panel on the Cardputer's EXT header -----------------
-// A 2.8" ILI9341 (320x240) wired the way its owner's radar project has it:
-// CS 5, RST 3, DC 6, MOSI 14, SCK 40, backlight on 5 V. TFT_eSPI drives one
-// panel a build, and that is the built-in one, so this is a small driver of
-// its own on the other SPI host: the main scene is drawn into an 8-bit sprite
-// and sent as 16-bit rows. With it on, Squachy lives on the big screen and
-// the built-in one is left for the menus.
-static const int   EXT_CS = 5, EXT_RST = 3, EXT_DC = 6, EXT_MOSI = 14, EXT_SCK = 40;
+// [SquaschWatch_CardputerAdv_ST7789V] A Waveshare 2" LCD module (ST7789V,
+// 240x320 IPS) instead of the original 2.8" ILI9341. Same pins as the
+// LauncherDual project: CS 5, RST 3, DC 6, MOSI 14 and SCK 40 (shared with the
+// SD card's wires), and the module's backlight on GPIO4 so software can switch
+// it -- it follows BRIGHTNESS and goes dark with EXT SCREEN OFF. Every pin can
+// be overridden with -DEXT_TFT_xx in platformio.ini.
+//
+// TFT_eSPI drives one panel a build, and that is the built-in one, so this is
+// a small driver of its own on the other SPI host: the main scene is drawn
+// into an 8-bit sprite and sent as 16-bit rows, in landscape (320x240).
+#ifndef EXT_TFT_CS
+#define EXT_TFT_CS   5
+#endif
+#ifndef EXT_TFT_DC
+#define EXT_TFT_DC   6
+#endif
+#ifndef EXT_TFT_RST
+#define EXT_TFT_RST  3
+#endif
+#ifndef EXT_TFT_MOSI
+#define EXT_TFT_MOSI 14
+#endif
+#ifndef EXT_TFT_SCK
+#define EXT_TFT_SCK  40
+#endif
+#ifndef EXT_TFT_BL
+#define EXT_TFT_BL   4          // -1 if the module's BL is wired to 3V3 instead
+#endif
+#ifndef EXT_SPI_FREQ
+#define EXT_SPI_FREQ 40000000   // what LauncherDual runs it at; try 20000000 on long wires
+#endif
+#ifndef EXT_MADCTL
+#define EXT_MADCTL   0x60       // MX|MV, RGB: landscape, LauncherDual's rotation 1
+#endif
+static const int   EXT_CS = EXT_TFT_CS, EXT_RST = EXT_TFT_RST, EXT_DC = EXT_TFT_DC,
+                   EXT_MOSI = EXT_TFT_MOSI, EXT_SCK = EXT_TFT_SCK, EXT_BL = EXT_TFT_BL;
 static SPIClass    s_extSpi(HSPI);
 static TFT_eSprite frameExt = TFT_eSprite(&tft);
 static bool        s_extOk = false;        // the panel was set up and its frame allocated
 static bool        s_extOn = false;        // and it is being drawn
-static uint8_t     s_extMad = 0xE8;        // MADCTL: landscape, the right way up on its owner's bench
+static uint8_t     s_extMad = EXT_MADCTL;  // MADCTL: landscape
 static uint16_t    s_extLut[256];          // 8-bit colour -> 16-bit, bytes already in wire order
 volatile int8_t    g_consoleExt = -1;      // EXT ON / EXT OFF / EXT ROT, for the bench
+// SPI mode 3, as Arduino_GFX's ST7789 driver uses on an ESP32.
+#define EXT_SPI_SETTINGS SPISettings(EXT_SPI_FREQ, MSBFIRST, SPI_MODE3)
+
+// The module's backlight. On, it is the second channel of the brightness
+// PWM (BL_CH_CAP: unused on an S3, and applyBrightness(), the dimmer and the
+// charge screen already write it the same duty as the built-in screen's).
+// Off, the pin is released from the PWM and held low.
+static void extBacklight(bool on) {
+    if (EXT_BL < 0) return;
+    static int8_t was = -1;
+    if (was == (int8_t)on) return;
+    was = (int8_t)on;
+    if (on) {
+        ledcSetup(BL_CH_CAP, 5000, 8);
+        ledcAttachPin(EXT_BL, BL_CH_CAP);
+        ledcWrite(BL_CH_CAP, Settings::brightness());
+    } else {
+        ledcDetachPin(EXT_BL);
+        pinMode(EXT_BL, OUTPUT);
+        digitalWrite(EXT_BL, LOW);
+    }
+}
 
 static void extCmd(uint8_t c, const uint8_t* d = nullptr, size_t n = 0) {
     digitalWrite(EXT_DC, LOW);
@@ -1001,7 +1052,7 @@ static void extCmd(uint8_t c, const uint8_t* d = nullptr, size_t n = 0) {
     digitalWrite(EXT_CS, HIGH);
 }
 static void extMadctl() {
-    s_extSpi.beginTransaction(SPISettings(27000000, MSBFIRST, SPI_MODE0));
+    s_extSpi.beginTransaction(EXT_SPI_SETTINGS);
     extCmd(0x36, &s_extMad, 1);
     s_extSpi.endTransaction();
 }
@@ -1009,37 +1060,52 @@ static bool extBegin() {
     if (s_extOk) return true;
     pinMode(EXT_CS, OUTPUT);  digitalWrite(EXT_CS, HIGH);
     pinMode(EXT_DC, OUTPUT);  digitalWrite(EXT_DC, HIGH);
-    pinMode(EXT_RST, OUTPUT);
-    digitalWrite(EXT_RST, HIGH); delay(5);
-    digitalWrite(EXT_RST, LOW);  delay(20);
-    digitalWrite(EXT_RST, HIGH); delay(150);
+    if (EXT_RST >= 0) {
+        pinMode(EXT_RST, OUTPUT);
+        digitalWrite(EXT_RST, HIGH); delay(5);
+        digitalWrite(EXT_RST, LOW);  delay(20);
+        digitalWrite(EXT_RST, HIGH); delay(120);
+    }
     s_extSpi.begin(EXT_SCK, -1, EXT_MOSI, -1);
-    // The init list its owner's project sends, command then data.
+    s_extSpi.beginTransaction(EXT_SPI_SETTINGS);
+    extCmd(0x01); delay(120);           // SWRESET
+    extCmd(0x11); delay(120);           // SLPOUT
+    s_extSpi.endTransaction();
+    // The ST7789 init Arduino_GFX sends (st7789_type1_init_operations), the
+    // one LauncherDual drives this module with. Command, length, data.
     static const uint8_t INIT[] = {
-        0xEF, 3, 0x03, 0x80, 0x02,
-        0xCF, 3, 0x00, 0xC1, 0x30,
-        0xED, 4, 0x64, 0x03, 0x12, 0x81,
-        0xE8, 3, 0x85, 0x00, 0x78,
-        0xCB, 5, 0x39, 0x2C, 0x00, 0x34, 0x02,
-        0xF7, 1, 0x20,
-        0xEA, 2, 0x00, 0x00,
-        0xC0, 1, 0x23,
-        0xC1, 1, 0x10,
-        0xC5, 2, 0x3E, 0x28,
-        0xC7, 1, 0x86,
-        0x3A, 1, 0x55,                  // 16 bits a pixel
-        0xB1, 2, 0x00, 0x18,
-        0xB6, 3, 0x08, 0x82, 0x27,
-        0xF2, 1, 0x00,
-        0x26, 1, 0x01,
-        0xE0, 15, 0x0F,0x31,0x2B,0x0C,0x0E,0x08,0x4E,0xF1,0x37,0x07,0x10,0x03,0x0E,0x09,0x00,
-        0xE1, 15, 0x00,0x0E,0x14,0x03,0x11,0x07,0x31,0xC1,0x48,0x08,0x0F,0x0C,0x31,0x36,0x0F,
+        0x3A, 1, 0x55,                  // COLMOD: 16 bits a pixel
+        0xB0, 2, 0x00, 0xF0,            // RAMCTRL: MSB first
+        0xB2, 5, 0x0C, 0x0C, 0x00, 0x33, 0x33,   // PORCTRL
+        0xB7, 1, 0x35,                  // GCTRL
+        0xBB, 1, 0x19,                  // VCOMS
+        0xC0, 1, 0x2C,                  // LCMCTRL
+        0xC2, 1, 0x01,                  // VDVVRHEN
+        0xC3, 1, 0x12,                  // VRHS
+        0xC4, 1, 0x20,                  // VDVS
+        0xC6, 1, 0x0F,                  // FRCTRL2: 60 Hz
+        0xD0, 2, 0xA4, 0xA1,            // PWCTRL1
+        0xE0, 14, 0xF0,0x09,0x13,0x12,0x12,0x2B,0x3C,0x44,0x4B,0x1B,0x18,0x17,0x1D,0x21,
+        0xE1, 14, 0xF0,0x09,0x13,0x0C,0x0D,0x27,0x3B,0x44,0x4D,0x0B,0x17,0x17,0x1D,0x21,
     };
-    s_extSpi.beginTransaction(SPISettings(27000000, MSBFIRST, SPI_MODE0));
+    s_extSpi.beginTransaction(EXT_SPI_SETTINGS);
     for (size_t i = 0; i < sizeof INIT; i += 2 + INIT[i + 1]) extCmd(INIT[i], INIT + i + 2, INIT[i + 1]);
+    extCmd(0x21);                       // INVON: an IPS panel shows true colours inverted
     extCmd(0x36, &s_extMad, 1);
-    extCmd(0x11); delay(120);
-    extCmd(0x29); delay(20);
+    extCmd(0x13); delay(10);            // NORON
+    // Black before the backlight comes on, not whatever the RAM held.
+    static const uint8_t CA[4] = { 0, 0, (319 >> 8), (319 & 0xFF) }, PA[4] = { 0, 0, 0, 239 };
+    extCmd(0x2A, CA, 4);
+    extCmd(0x2B, PA, 4);
+    digitalWrite(EXT_DC, LOW); digitalWrite(EXT_CS, LOW);
+    s_extSpi.write(0x2C);
+    digitalWrite(EXT_DC, HIGH);
+    {
+        static const uint8_t zeros[640] = {};   // one row
+        for (int y = 0; y < 240; y++) s_extSpi.writeBytes(zeros, sizeof zeros);
+    }
+    digitalWrite(EXT_CS, HIGH);
+    extCmd(0x29); delay(20);            // DISPON
     s_extSpi.endTransaction();
     for (int i = 0; i < 256; i++) {
         const uint16_t c = tft.color8to16((uint8_t)i);
@@ -1047,7 +1113,7 @@ static bool extBegin() {
     }
     frameExt.setColorDepth(8);
     s_extOk = frameExt.createSprite(320, 240) != nullptr;
-    Serial.printf("[ext] ILI9341 on the EXT header: %s (heap %lu, largest %lu)\n", s_extOk ? "frame allocated" : "NO MEMORY for its frame",
+    Serial.printf("[ext] ST7789V on the EXT header: %s (heap %lu, largest %lu)\n", s_extOk ? "frame allocated" : "NO MEMORY for its frame",
                   (unsigned long)ESP.getFreeHeap(), (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
     return s_extOk;
 }
@@ -1056,7 +1122,7 @@ static void extPush() {
     const uint8_t* src = (const uint8_t*)frameExt.getPointer();
     if (!src) return;
     static const uint8_t CA[4] = { 0, 0, (319 >> 8), (319 & 0xFF) }, PA[4] = { 0, 0, 0, 239 };
-    s_extSpi.beginTransaction(SPISettings(27000000, MSBFIRST, SPI_MODE0));
+    s_extSpi.beginTransaction(EXT_SPI_SETTINGS);
     extCmd(0x2A, CA, 4);
     extCmd(0x2B, PA, 4);
     digitalWrite(EXT_DC, LOW); digitalWrite(EXT_CS, LOW);
@@ -4308,6 +4374,10 @@ void setup() {
     // GPIO27 and GPIO32 are the S3's PSRAM lines: touching either hangs the
     // chip until the watchdog reboots it. Both S3 boards' backlight is GPIO45.
     pinMode(BL_PIN_S3, OUTPUT); digitalWrite(BL_PIN_S3, HIGH);
+#if defined(CARDPUTER_ADV)
+    // The EXT SCREEN module's backlight: dark until EXT SCREEN turns it on.
+    if (EXT_TFT_BL >= 0) { pinMode(EXT_TFT_BL, OUTPUT); digitalWrite(EXT_TFT_BL, LOW); }
+#endif
 #elif defined(CROWPANEL7)
     // Nothing at all. This board's backlight is not a GPIO -- it is an I2C
     // command to the helper MCU, sent once Wire is up. GPIO27/32 are the same
@@ -6414,7 +6484,7 @@ void loop() {
         const int8_t c = g_consoleExt;
         g_consoleExt = -1;
         if (c == 2 && s_extOk) {
-            static const uint8_t MADS[4] = { 0xA8, 0x68, 0x28, 0xE8 };
+            static const uint8_t MADS[4] = { 0xA0, 0x20, 0xE0, 0x60 };   // ST7789 landscapes, RGB
             static uint8_t at = 0;
             s_extMad = MADS[++at % 4];
             extMadctl();
@@ -6727,6 +6797,7 @@ void loop() {
         static bool tried = false;
         if (Settings::extScreen() && !s_extOk && !tried) { tried = true; extBegin(); }
         s_extOn = Settings::extScreen() && s_extOk;
+        extBacklight(s_extOn);
         Theme::setStillBackdrop(s_extOn);
     }
     const bool extFrame = s_extOn && state != AppState::BOOT;
