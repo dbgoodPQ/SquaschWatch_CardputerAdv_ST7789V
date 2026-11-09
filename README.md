@@ -30,27 +30,43 @@ Two builds are provided:
 | Default build (`pio run`) | the CYD boards | `cardputer-adv` and `cardputer-adv-extui` |
 | CI | builds the CYD family | one GitHub Action that builds only the two Cardputer ADV builds and uploads their binaries |
 
-Code changes are limited to the `EXT SCREEN` block and a few `CARDPUTER_EXTUI` guards in `src/main.cpp`,
-one line in `src/ui_settings.cpp`, the new `include/cardputer_adv_extui_user_setup.h`, and the two
-Cardputer ADV sections of `platformio.ini`.
+| Keyboard cursor | stops on the main screen's buttons, lists, a few dialogs; a coarse grid elsewhere | stops on every tap target of every screen; typing on text screens; ESC cannot leave the lock screen |
+
+Code changes: the `EXT SCREEN` block, `CARDPUTER_EXTUI` guards and the keyboard cursor in
+`src/main.cpp`; a small `…Stops()` function in the UI files whose screens keep their own button
+rectangles; the PIN pad's keyboard path in `src/ui_phone.cpp`; the new
+`include/cardputer_adv_extui_user_setup.h`; and the two Cardputer ADV sections of `platformio.ini`.
 
 ## EXT UI build: keyboard navigation
 
 The ST7789V has no touch panel, so the EXT UI build uses the same keyboard cursor the built-in screen
-uses in upstream. Every screen is the 320x240 layout of the 2.8" CYD, and every tap target on it is a
-cursor stop.
+uses in upstream. Every screen is the 320x240 layout of the 2.8" CYD, and the cursor stops on every tap
+target each screen draws: on the main screen that includes the message bubble, the watch pill, the
+squad badge, each visiting Squachy and NEARBY; elsewhere the stops come from each screen's own hit
+test, so they sit exactly on its buttons and rows.
 
 | Key | Action |
 | --- | --- |
 | `↓` `→` or `TAB` | next stop (the first press only shows the cursor) |
 | `↑` `←` | previous stop |
-| `ENTER` or `SPACE` | press the stop; hold it for a long press (e.g. WATCH/HUNT on a LOG row) |
-| `ESC` or `DEL` | back to the main screen |
+| `ENTER` or `SPACE` | press the stop; hold it for a long press (LOG and SCAN rows, NEARBY) |
+| `ESC` or `DEL` | back to the main screen (not from the lock screen) |
 
 The arrows are the Cardputer's `;` `.` `,` `/` keys. The cursor (amber brackets) hides after 5 seconds
-without a key; list arrows at the right edge scroll long lists. The screen is fixed in landscape; build
-with `-DEXTUI_ROTATION=3` to turn it 180°. Pins for this build are in
-`include/cardputer_adv_extui_user_setup.h`.
+without a key; the arrows at the right edge of a list scroll it.
+
+**Text screens** (WiFi password, Squachy's name, messages, PIN pads) type from the keyboard instead:
+
+| Key | Action |
+| --- | --- |
+| letters, digits, symbols | typed as printed; `SHIFT` for the upper character |
+| `DEL` | delete |
+| `ENTER` | OK — or, while the cursor is showing, press the cursor's stop |
+| `FN` + `;` `.` `,` `/`, or `TAB` | move the cursor (to reach BACK, SHOW…) |
+| `ESC` | back to the main screen |
+
+The screen is fixed in landscape; build with `-DEXTUI_ROTATION=3` to turn it 180°. Pins for this build
+are in `include/cardputer_adv_extui_user_setup.h`.
 
 ## Pinout (Cardputer ADV EXT header → Waveshare 2" module)
 
