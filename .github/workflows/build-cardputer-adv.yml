@@ -1,9 +1,11 @@
-# Builds only the M5Stack Cardputer ADV firmware (EXT SCREEN = Waveshare 2"
-# ST7789V) and uploads it as a workflow artifact:
+# Builds only the M5Stack Cardputer ADV firmware with the Waveshare 2"
+# ST7789V, in its two variants, and uploads one artifact for each:
 #
-#   SquachWatch-CardputerAdv-ST7789V-merged.bin   whole image, flash at 0x0
-#   bootloader.bin / partitions.bin / boot_app0.bin / firmware.bin
-#                                                  the separate pieces
+#   cardputer-adv        dual screen: Squachy on the ST7789V, menus built-in
+#   cardputer-adv-extui  everything on the ST7789V, keyboard navigation
+#
+# Each artifact holds <name>-merged.bin (whole image, flash at 0x0), the
+# separate bootloader/partitions/boot_app0/firmware.bin, and FLASHING.txt.
 #
 # Runs on every push and pull request, and by hand from the Actions tab
 # (Run workflow). On a v*.*.* tag the same files are attached to a GitHub
@@ -26,13 +28,20 @@ concurrency:
 permissions:
   contents: write   # only used to attach files to a release on a tag
 
-env:
-  PIO_ENV: cardputer-adv
-  OUT_NAME: SquachWatch-CardputerAdv-ST7789V
-
 jobs:
   cardputer-adv:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - pio_env: cardputer-adv
+            out_name: SquachWatch-CardputerAdv-ST7789V-dual
+          - pio_env: cardputer-adv-extui
+            out_name: SquachWatch-CardputerAdv-ST7789V-extui
+    env:
+      PIO_ENV: ${{ matrix.pio_env }}
+      OUT_NAME: ${{ matrix.out_name }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -77,7 +86,8 @@ jobs:
             0x10000 out/firmware.bin
           VERSION="$(git describe --tags --always --dirty)"
           cat > out/FLASHING.txt <<EOF
-          SquachWatch for M5Stack Cardputer ADV + Waveshare 2" ST7789V (EXT SCREEN)
+          SquachWatch for M5Stack Cardputer ADV + Waveshare 2" ST7789V
+          Build: $PIO_ENV
           Version: $VERSION
 
           Fresh install (erases saved settings):
@@ -97,8 +107,9 @@ jobs:
           path: out/*
           if-no-files-found: error
 
+      # Release assets share one namespace: only the merged image, named per build.
       - name: Attach to release (tags only)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: out/*
+          files: out/${{ env.OUT_NAME }}-merged.bin

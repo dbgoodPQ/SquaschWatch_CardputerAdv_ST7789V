@@ -488,7 +488,9 @@ static void drawCrashCard(TFT_eSPI& t) {
 #define BL_PIN_ORIG 21
 #define BL_PIN_CAP  27
 #define BL_PIN_AWOK 32
-#if defined(SQW_SMALL)
+#if defined(CARDPUTER_EXTUI)
+#define BL_PIN_S3   EXTUI_TFT_BL   // the external Waveshare module's (GPIO4)
+#elif defined(SQW_SMALL)
 #define BL_PIN_S3   38   // the StickS3's and the Cardputer ADV's
 #elif defined(FREENOVE_S3_35)
 #define BL_PIN_S3   41   // the Freenove 3.5"'s, through a BSS138 (HIGH is on)
@@ -975,7 +977,13 @@ static bool sampleTouchRaw(int16_t& a, int16_t& b) {
 static bool s_confirmPending = false;   // the WATCH/HUNT panel is up
 static bool s_infoPending    = false;   // MORE INFO is up
 
-#if defined(CARDPUTER_ADV)
+#if defined(CARDPUTER_EXTUI)
+// The EXT UI build drives the external panel as THE display (TFT_eSPI), so
+// the dual-screen EXT SCREEN driver below is left out. The console's
+// EXT ON/OFF/ROT still parse; they do nothing here.
+volatile int8_t    g_consoleExt = -1;
+#endif
+#if defined(CARDPUTER_ADV) && !defined(CARDPUTER_EXTUI)
 // ---- EXT SCREEN: a second panel on the Cardputer's EXT header -----------------
 // [SquaschWatch_CardputerAdv_ST7789V] A Waveshare 2" LCD module (ST7789V,
 // 240x320 IPS) instead of the original 2.8" ILI9341. Same pins as the
@@ -4374,7 +4382,11 @@ void setup() {
     // GPIO27 and GPIO32 are the S3's PSRAM lines: touching either hangs the
     // chip until the watchdog reboots it. Both S3 boards' backlight is GPIO45.
     pinMode(BL_PIN_S3, OUTPUT); digitalWrite(BL_PIN_S3, HIGH);
-#if defined(CARDPUTER_ADV)
+#if defined(CARDPUTER_EXTUI)
+    // The built-in 1.14" screen is not driven in this build: its backlight
+    // (GPIO38) stays off. BL_PIN_S3 above is the external module's (GPIO4).
+    pinMode(38, OUTPUT); digitalWrite(38, LOW);
+#elif defined(CARDPUTER_ADV)
     // The EXT SCREEN module's backlight: dark until EXT SCREEN turns it on.
     if (EXT_TFT_BL >= 0) { pinMode(EXT_TFT_BL, OUTPUT); digitalWrite(EXT_TFT_BL, LOW); }
 #endif
@@ -4455,6 +4467,9 @@ void setup() {
     // boards that can actually rotate restore a saved orientation.
     screenRotation = Settings::rotation();
 #endif
+#if defined(CARDPUTER_EXTUI)
+    screenRotation = EXTUI_ROTATION;   // fixed landscape; no rotate button without touch
+#endif
     // Landscape (320 wide × 240 tall) — the CYD's natural orientation
     // with the ST7789 driver. The 0xC2 unlock that was here was for
     // ST7796U and will lock up an ST7789 panel; do not re-add it unless
@@ -4467,7 +4482,9 @@ void setup() {
     }
 #if defined(SQW_SMALL)
     Theme::setRotateIconVisible(false);
+#if !defined(CARDPUTER_EXTUI)   // EXT UI: a 320x240 screen gets the CYD's layouts
     Theme::setCompact(true);
+#endif
 #if defined(STICKS3)
     pinMode(STICK_KEY1, INPUT_PULLUP);
     pinMode(STICK_KEY2, INPUT_PULLUP);
@@ -4772,7 +4789,11 @@ void setup() {
 #elif defined(SQW_SMALL)
     usingCapTouch = false;
 #if defined(CARDPUTER_ADV)
+#if defined(CARDPUTER_EXTUI)
+    Serial.printf("Cardputer ADV EXT UI -- %dx%d ST7789V on the EXT header; keyboard %s.\n", tft.width(), tft.height(), cardKeysBegin() ? "answered" : "DID NOT ANSWER");
+#else
     Serial.printf("Cardputer ADV -- no touch panel; keyboard %s.\n", cardKeysBegin() ? "answered" : "DID NOT ANSWER");
+#endif
 #else
     Serial.println("StickS3 -- no touch panel; buttons on GPIO11 and GPIO12.");
 #endif
@@ -5163,7 +5184,7 @@ static inline void pushFrame(int x, int y) {
 #if defined(TWATCH_S3)
     if (s_panelAsleep) return;   // nothing to show it to; see applyBrightness()
 #endif
-#if defined(CARDPUTER_ADV)
+#if defined(CARDPUTER_ADV) && !defined(CARDPUTER_EXTUI)
     // With the EXT panel taking a push of its own, the built-in screen is
     // only sent when it has changed: a menu sits still, and 17 ms a frame
     // spent re-sending it is the big screen's frame rate.
@@ -6479,7 +6500,7 @@ void loop() {
     }
     gpsTick();
 #endif
-#if defined(CARDPUTER_ADV)
+#if defined(CARDPUTER_ADV) && !defined(CARDPUTER_EXTUI)
     if (g_consoleExt >= 0) {
         const int8_t c = g_consoleExt;
         g_consoleExt = -1;
@@ -6787,7 +6808,7 @@ void loop() {
     }
 
     FrameProf::lap(FrameProf::PRE);
-#if defined(CARDPUTER_ADV)
+#if defined(CARDPUTER_ADV) && !defined(CARDPUTER_EXTUI)
     // The main scene on the EXT panel, whatever the built-in screen is
     // showing. This call is the one that advances him; the built-in screen's
     // own copy, when it is on the main screen too, is the same frame again.
@@ -6984,7 +7005,7 @@ void loop() {
                 // path this board already uses for every other screen.
                 uiClearTick(tft, now, engine, true, s_scanPickerOpen);
             }
-#elif defined(CARDPUTER_ADV)
+#elif defined(CARDPUTER_ADV) && !defined(CARDPUTER_EXTUI)
             uiClearTick(*canvas, now, engine, !extFrame, s_scanPickerOpen);
 #else
             uiClearTick(*canvas, now, engine, true, s_scanPickerOpen);
@@ -9505,7 +9526,11 @@ void loop() {
 #elif defined(STICKS3)
             info.boardName = "StickS3 LAB";
 #elif defined(CARDPUTER_ADV)
+#if defined(CARDPUTER_EXTUI)
+            info.boardName = "Cardputer ADV EXT UI";
+#else
             info.boardName = "Cardputer ADV LAB";
+#endif
 #elif defined(TDECK_PLUS)
             info.boardName = "tdeck-plus LAB";
 #elif defined(FREENOVE_S3_35)

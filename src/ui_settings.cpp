@@ -91,7 +91,7 @@ static const SettingsRow ALL_ROWS[] = {
 #endif
     SettingsRow::DETECTION_FILTER,
     SettingsRow::IGNORED_DEVICES,
-#if defined(CARDPUTER_ADV)
+#if defined(CARDPUTER_ADV) && !defined(CARDPUTER_EXTUI)
     SettingsRow::EXT_SCREEN,
 #endif
     // APPEARANCE opens the display page -- see APPEARANCE_ROWS. It sat at the

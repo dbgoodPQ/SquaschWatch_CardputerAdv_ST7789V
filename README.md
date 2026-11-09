@@ -10,6 +10,13 @@ controls — is the original author's work and is unchanged. For what SquachWatc
 it, read the [upstream README](https://github.com/skizzophrenic/SquachWatch-CYD#readme). This page
 only lists what differs.
 
+Two builds are provided:
+
+| Build | Built-in 1.14" screen | Waveshare 2" ST7789V |
+| --- | --- | --- |
+| **`cardputer-adv`** (dual) | menus, keyboard cursor | Squachy's main scene (turn on in Settings → EXT SCREEN) |
+| **`cardputer-adv-extui`** (EXT UI) | off | **the whole interface** at 320x240, navigated with the keyboard cursor |
+
 ## What changed
 
 | | Upstream `cardputer-adv` | This fork |
@@ -19,11 +26,31 @@ only lists what differs.
 | SPI | 27 MHz, mode 0 | 40 MHz, mode 3 (as in [LauncherDual](https://github.com/dbgoodPQ/LauncherDual)) |
 | External backlight | wired to 5 V, always on | **G4**, software-controlled: follows BRIGHTNESS and dims with the screen, off when EXT SCREEN is OFF |
 | `EXT ROT` console command | cycles ILI9341 orientations | cycles ST7789 landscape orientations |
-| Default build (`pio run`) | the CYD boards | `cardputer-adv` only |
-| CI | builds the CYD family | one GitHub Action that builds only `cardputer-adv` and uploads the binaries |
+| Full UI on the external screen | — | new `cardputer-adv-extui` build: TFT_eSPI drives the ST7789V as the main display (CYD 320x240 layouts) with keyboard cursor navigation; built-in screen off |
+| Default build (`pio run`) | the CYD boards | `cardputer-adv` and `cardputer-adv-extui` |
+| CI | builds the CYD family | one GitHub Action that builds only the two Cardputer ADV builds and uploads their binaries |
 
-Code changes are limited to the `EXT SCREEN` block in `src/main.cpp` (inside `#if defined(CARDPUTER_ADV)`)
-and the `[env:cardputer-adv]` section of `platformio.ini`. The built-in 1.14" screen is untouched.
+Code changes are limited to the `EXT SCREEN` block and a few `CARDPUTER_EXTUI` guards in `src/main.cpp`,
+one line in `src/ui_settings.cpp`, the new `include/cardputer_adv_extui_user_setup.h`, and the two
+Cardputer ADV sections of `platformio.ini`.
+
+## EXT UI build: keyboard navigation
+
+The ST7789V has no touch panel, so the EXT UI build uses the same keyboard cursor the built-in screen
+uses in upstream. Every screen is the 320x240 layout of the 2.8" CYD, and every tap target on it is a
+cursor stop.
+
+| Key | Action |
+| --- | --- |
+| `↓` `→` or `TAB` | next stop (the first press only shows the cursor) |
+| `↑` `←` | previous stop |
+| `ENTER` or `SPACE` | press the stop; hold it for a long press (e.g. WATCH/HUNT on a LOG row) |
+| `ESC` or `DEL` | back to the main screen |
+
+The arrows are the Cardputer's `;` `.` `,` `/` keys. The cursor (amber brackets) hides after 5 seconds
+without a key; list arrows at the right edge scroll long lists. The screen is fixed in landscape; build
+with `-DEXTUI_ROTATION=3` to turn it 180°. Pins for this build are in
+`include/cardputer_adv_extui_user_setup.h`.
 
 ## Pinout (Cardputer ADV EXT header → Waveshare 2" module)
 
@@ -50,17 +77,19 @@ Optional flags in the same section:
 
 ## Using it
 
-Turn it on in **Settings → EXT SCREEN → ON** (saved across reboots). Squachy then runs on the
-external screen and the built-in one keeps the menus, as in upstream.
+- **Dual build:** turn it on in **Settings → EXT SCREEN → ON** (saved across reboots). Squachy then
+  runs on the external screen and the built-in one keeps the menus, as in upstream.
+- **EXT UI build:** nothing to turn on; everything is on the external screen from boot.
 
 ## Build and flash
 
 Download the firmware from the **Actions** tab → *Build Cardputer ADV (ST7789V)* → latest run →
-artifact. It contains a merged image and the separate parts, with `FLASHING.txt`.
+artifacts: `SquachWatch-CardputerAdv-ST7789V-dual-…` or `SquachWatch-CardputerAdv-ST7789V-extui-…`.
+Each contains a merged image and the separate parts, with `FLASHING.txt`.
 
 ```
 # fresh install (erases saved settings)
-esptool.py --chip esp32s3 write_flash 0x0 SquachWatch-CardputerAdv-ST7789V-merged.bin
+esptool.py --chip esp32s3 write_flash 0x0 SquachWatch-CardputerAdv-ST7789V-extui-merged.bin
 ```
 
 Download mode: hold **G0** while pressing **RST**.
@@ -70,7 +99,7 @@ Or build it yourself:
 ```
 git clone https://github.com/dbgoodPQ/SquaschWatch_CardputerAdv_ST7789V
 cd SquaschWatch_CardputerAdv_ST7789V
-pio run -e cardputer-adv -t upload
+pio run -e cardputer-adv-extui -t upload   # or -e cardputer-adv for the dual build
 ```
 
 ## Credits
