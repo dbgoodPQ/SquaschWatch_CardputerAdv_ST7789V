@@ -182,7 +182,15 @@ const char* failWords(Fail f) {
     }
 }
 
-bool available() { return esp_ota_get_next_update_partition(nullptr) != nullptr; }
+// [SquaschWatch_CardputerAdv_ST7789V] Looked up once: the partition table
+// never changes while running, and the lookup walks it (a find per OTA slot).
+// The settings list asks this for its SYSTEM page on every draw and every hit
+// test, and the keyboard cursor runs the hit test over the whole screen.
+bool available() {
+    static int8_t s_avail = -1;
+    if (s_avail < 0) s_avail = esp_ota_get_next_update_partition(nullptr) != nullptr ? 1 : 0;
+    return s_avail == 1;
+}
 
 const char* runningSlot() {
     const esp_partition_t* p = esp_ota_get_running_partition();

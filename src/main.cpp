@@ -1678,9 +1678,6 @@ static TouchPoint stickPoll() {
         return tp;
     }
     if (state != s_stickStopState) { s_stickStopState = state; s_stickStop = 0; }
-    StickPt pts[STICK_STOPS_MAX];
-    const uint8_t n = stickStops(pts);
-    if (s_stickStop >= n) s_stickStop = 0;
     const SmallKeys keys = smallKeysRead();
 #if defined(CARDPUTER_ADV)
     cardTypeFlush(now);
@@ -1690,6 +1687,18 @@ static TouchPoint stickPoll() {
         s_stickHome = true;
         Serial.println("[keys] home");
     }
+    // [SquaschWatch_CardputerAdv_ST7789V] The stops are a sweep of hit tests
+    // over the whole screen: only worked out while the cursor is in use (a
+    // key, a hold, or the cursor showing), not every 200 ms in the background.
+    const bool cursorUp = s_stickShownAt && now - s_stickShownAt < STICK_SHOW_MS;
+    if (!keys.next && !keys.prev && !k1 && !s_stickKey1Was && !s_stickHoldUntil && !cursorUp) {
+        s_stickPtsAt = 0;               // stale by the time it is wanted again
+        return tp;
+    }
+    StickPt pts[STICK_STOPS_MAX];
+    const uint8_t n = stickStops(pts);
+    if (n == 0) { s_stickKey1Was = k1; return tp; }
+    if (s_stickStop >= n) s_stickStop = 0;
     if (keys.next || keys.prev) {
         // The first press only shows where the cursor is; the next ones move it.
         if (now - s_stickShownAt < STICK_SHOW_MS)
